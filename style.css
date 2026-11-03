@@ -1,0 +1,18 @@
+:root{--ink:#0B2620;--ink-deep:#061714;--ink-soft:#12362E;--line:#1F4A40;--gold:#C8A24E;--gold-l:#E8D29A;--ivory:#F4ECD8;--muted:#94ADA4;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(120% 80% at 50% 0%,var(--ink-soft),var(--ink) 55%,var(--ink-deep));background-attachment:fixed;color:var(--ivory);font:16px/1.65 "Manrope",system-ui,sans-serif;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:720px;margin:0 auto}
+header{display:flex;align-items:center;gap:16px;margin-bottom:28px}
+header img{width:64px;height:64px;border-radius:16px;border:1px solid rgba(200,162,78,.5)}
+h1,h2{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;line-height:1.15;text-wrap:balance}
+h1{font-size:2.4rem;margin:0}
+h2{font-size:1.6rem;color:var(--gold-l);margin:2.2rem 0 .6rem}
+.eyebrow{font-size:.75rem;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);font-weight:700}
+.rule{height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);margin:28px 0}
+.card{background:rgba(18,54,46,.75);border:1px solid rgba(200,162,78,.3);border-radius:18px;padding:20px 22px}
+a{color:var(--gold-l)}
+a:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+ul,ol{padding-left:1.2rem}
+li{margin:.35rem 0}
+.muted{color:var(--muted);font-size:.9rem}
+nav{display:flex;gap:18px;flex-wrap:wrap;margin-top:36px;font-size:.95rem}
