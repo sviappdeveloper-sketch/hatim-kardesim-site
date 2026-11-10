@@ -1,0 +1,299 @@
+rules_version = '2';
+
+// Hatim Kardeşim — Firestore güvenlik kuralları.
+// Kural mantığının asıl denetimi uygulamadaki işlemlerde (transaction) yapılır;
+// bu kurallar dışarıdan yapılacak bariz kötüye kullanımları engeller.
+// Kullanıcı sayısı büyüdüğünde cüz alma/bırakma işlemlerini Cloud Functions'a
+// taşımanız önerilir (README'ye bakın).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    // Misafir girişi (anonim hesap): yalnızca açık gruplardan cüz alabilir, üye özellikleri kapalı.
+    function isGuest() { return request.auth.token.firebase.sign_in_provider == 'anonymous'; }
+    function genderOk(g) { return g in ['kadin', 'erkek'] || (g == 'misafir' && isGuest()); }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email in ['sviapp.developer@gmail.com']
+        && request.auth.token.email_verified == true;
+    }
+    // Yönetici tarafından engellenen üye cüz alamaz, grup kuramaz, istek ve tebrik gönderemez.
+    function notBlocked() {
+      return !exists(/databases/$(database)/documents/users/$(me()))
+        || get(/databases/$(database)/documents/users/$(me())).data.get('blocked', false) != true;
+    }
+
+    // Aylık okuma sayacı: yalnızca bu ayın (ya da saat farkı için geçen ayın) anahtarı 1 artabilir.
+    function monthKeyOf(t) {
+      return 'm' + string(t.year()) + (t.month() < 10 ? '0' : '') + string(t.month());
+    }
+    function monthReadsOk() {
+      let oldM = resource.data.get('monthReads', {});
+      let newM = request.resource.data.get('monthReads', {});
+      let changed = newM.diff(oldM).affectedKeys();
+      let k1 = monthKeyOf(request.time);
+      let k0 = monthKeyOf(request.time - duration.value(2, 'd'));
+      let k2 = monthKeyOf(request.time + duration.value(1, 'd'));
+      return changed.size() == 0
+        || (changed.hasOnly([k1, k0, k2]) && changed.size() == 1
+            && (!(k1 in changed) || newM.get(k1, 0) == oldM.get(k1, 0) + 1)
+            && (!(k0 in changed) || newM.get(k0, 0) == oldM.get(k0, 0) + 1)
+            && (!(k2 in changed) || newM.get(k2, 0) == oldM.get(k2, 0) + 1));
+    }
+
+    function nameOk(d) {
+      return !('name' in d) || (d.name is string && d.name.size() <= 60);
+    }
+    function nameChangeOk() {
+      return request.resource.data.get('name', '') == resource.data.get('name', '') || nameOk(request.resource.data);
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && me() == userId
+        && genderOk(request.resource.data.gender)
+        && nameOk(request.resource.data)
+        && request.resource.data.get('blocked', false) == false
+        && request.resource.data.get('totalJuzRead', 0) == 0
+        && request.resource.data.get('monthReads', {}).size() == 0;
+      allow update: if (signedIn() && me() == userId
+        && genderOk(request.resource.data.gender)
+        && nameChangeOk()
+        && (resource.data.get('gender', '') == '' || request.resource.data.gender == resource.data.gender)
+        && request.resource.data.get('blocked', false) == resource.data.get('blocked', false)
+        // Okunan cüz sayısı her seferinde en fazla 1 artabilir (sıralamada hile olmasın).
+        && request.resource.data.get('totalJuzRead', 0) - resource.data.get('totalJuzRead', 0) in [0, 1]
+        && monthReadsOk())
+        // Yönetici yalnızca engel bilgisini değiştirebilir.
+        || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blocked', 'blockedAt']));
+      // Hesap silme. Engellenen üye kaydını silip yeniden açarak engeli aşamasın.
+      allow delete: if signedIn() && me() == userId && resource.data.get('blocked', false) != true;
+    }
+
+    // Üyenin e-posta adresi: yalnızca kendisi ve yönetici okur.
+    match /userPrivate/{userId} {
+      allow read: if signedIn() && (me() == userId || isAdmin());
+      allow create, update: if signedIn() && me() == userId
+        && request.resource.data.email == request.auth.token.email.lower();
+      allow delete: if signedIn() && (me() == userId || isAdmin());
+    }
+
+    // Grubu kurmayan bir üyenin grup belgesinde yapabileceği değişiklikler:
+    // cüz alma/bırakma/okuma sayaçları, kendi üyeliği ve kendi katılma isteği. Ad, niyet, süre vb. kurucuya ait.
+    function memberChangeOk() {
+      let d = request.resource.data;
+      let o = resource.data;
+      let keys = d.diff(o).affectedKeys();
+      let added = d.memberIds.toSet().difference(o.memberIds.toSet());
+      let removed = o.memberIds.toSet().difference(d.memberIds.toSet());
+      return keys.hasOnly(['takenCount', 'juzCounts', 'memberIds', 'memberNames', 'startAt', 'endAt',
+                           'status', 'doneCount', 'hatimCount', 'finishedAt', 'joinRequests'])
+        && added.hasOnly([me()]) && removed.hasOnly([me()])
+        && d.get('memberNames', {}).diff(o.get('memberNames', {})).affectedKeys().hasOnly([me()])
+        && d.get('takenCount', 0) - o.get('takenCount', 0) <= 10
+        && o.get('takenCount', 0) - d.get('takenCount', 0) <= 1
+        && d.get('doneCount', 0) - o.get('doneCount', 0) in [0, 1]
+        && d.get('hatimCount', 0) - o.get('hatimCount', 0) in [0, 1]
+        && (!('startAt' in keys) || o.get('startAt', null) == null)
+        && (!('endAt' in keys) || o.get('endAt', null) == null);
+    }
+
+    match /groups/{gid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && notBlocked() && !isGuest()
+        && request.resource.data.creatorId == me()
+        && request.resource.data.durationDays >= 3
+        && request.resource.data.status == 'toplaniyor'
+        && request.resource.data.genderType in ['karma', 'kadin', 'erkek']
+        && request.resource.data.takenCount == 0;
+        // Grup kurma şartı şimdilik kapalı. Açmak için yukarıdaki satırın sonundaki ';' yerine şunu ekleyin:
+        // && (isAdmin() || get(/databases/$(database)/documents/users/$(me())).data.get('totalJuzRead', 0) >= 3);
+      allow update: if signedIn() && notBlocked()
+        && (resource.data.creatorId == me() || memberChangeOk())
+        && request.resource.data.creatorId == resource.data.creatorId
+        && request.resource.data.code == resource.data.code
+        && request.resource.data.durationDays == resource.data.durationDays
+        && request.resource.data.genderType == resource.data.genderType
+        && request.resource.data.takenCount >= 0
+        && request.resource.data.takenCount <= 30
+        // Cüz alındıkça durum "toplaniyor" <-> "okunuyor" arasında kendiliğinden değişir;
+        // hatmi bitirmek ve yeniden açmak yalnızca grubu kurana aittir.
+        && (request.resource.data.status == resource.data.status
+            || resource.data.creatorId == me()
+            || request.resource.data.status in ['toplaniyor', 'okunuyor']
+            // 30 cüzün tamamı okununca hatim kendiliğinden tamamlanır (son cüzü okuyan tetikler).
+            || (request.resource.data.status == 'tamamlandi' && request.resource.data.doneCount >= 30))
+        // Bir gruba en fazla 30 kişi katılabilir.
+        && request.resource.data.memberIds.size() <= 30
+        // Kilidi yalnızca grubu kuran açıp kapatabilir.
+        && (request.resource.data.get('locked', false) == resource.data.get('locked', false)
+            || resource.data.creatorId == me())
+        // Kilitli gruba kendi kendine katılınamaz; üyeyi grubu kuran ekler (istek onayı).
+        && (resource.data.creatorId == me()
+            || !resource.data.get('locked', false)
+            || request.resource.data.memberIds.size() <= resource.data.memberIds.size())
+        // Katılma isteklerinde herkes yalnızca kendi isteğini ekleyip silebilir; grubu kuran hepsini yanıtlar.
+        && (resource.data.creatorId == me()
+            || request.resource.data.get('joinRequests', {}).diff(resource.data.get('joinRequests', {})).affectedKeys().hasOnly([me()]));
+      allow delete: if isAdmin();
+    }
+
+    function juzGroup() { return get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data; }
+    // Cüzün teslim tarihi en fazla hatmin bitiş tarihi ya da (süresi geçmiş hatimde) birkaç gün sonrası olabilir.
+    function juzEndOk() {
+      let end = request.resource.data.endAt;
+      // getAfter: ilk cüz alınırken hatmin bitiş tarihi aynı işlemde yazılıyor.
+      let gEnd = getAfter(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.get('endAt', null);
+      return end is timestamp
+        && ((gEnd != null && end <= gEnd) || end <= request.time + duration.value(4, 'd'));
+    }
+    function takeOk() {
+      return resource.data.uid == null
+        && request.resource.data.uid == me()
+        && request.resource.data.status == 'alindi'
+        && request.resource.data.get('volunteer', false) == false
+        && juzEndOk();
+    }
+    function volunteerOk() {
+      return resource.data.uid != null && resource.data.uid != me()
+        && resource.data.status != 'okundu'
+        && resource.data.endAt is timestamp && resource.data.endAt < request.time
+        && request.resource.data.uid == me()
+        && request.resource.data.status == 'alindi'
+        && request.resource.data.volunteer == true
+        && juzEndOk();
+    }
+    function statusOk() {
+      return resource.data.uid == me()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'doneAt', 'updatedAt'])
+        && resource.data.status != 'okundu'
+        && request.resource.data.status in ['okunuyor', 'okundu'];
+    }
+    // Bırakma (hesap silinirken okunmakta olan cüz de bırakılır).
+    function releaseOk() {
+      return resource.data.uid == me()
+        && resource.data.status in ['alindi', 'okunuyor']
+        && request.resource.data.uid == null
+        && request.resource.data.status == 'bos';
+    }
+    function resetOk() {
+      return juzGroup().creatorId == me()
+        && request.resource.data.uid == null
+        && request.resource.data.status == 'bos';
+    }
+
+    // Cüzler: belge kimliği grupId_cüzNo, groupId alanı gruba bağlar.
+    match /juz/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && notBlocked()
+        && getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.creatorId == me();
+      allow update: if signedIn() && notBlocked()
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.number == resource.data.number
+        && (
+             takeOk()        // boş cüzü alma
+          || volunteerOk()   // süresi dolmuş başkasının cüzünü yeniden alma
+          || statusOk()      // kendi cüzünün okuma durumunu değiştirme
+          || releaseOk()     // okumaya başlamadığı kendi cüzünü bırakma
+          || (resource.data.uid == me()   // hesap silinirken adın anonimleştirilmesi
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userName']))
+          || resetOk()       // grubu kuranın yeni hatim açması
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /friendRequests/{id} {
+      allow read: if signedIn() && (resource == null
+        || resource.data.fromUid == me()
+        || resource.data.toUid == me()
+        || me() in resource.data.members);
+      allow create: if signedIn() && notBlocked()
+        && !isGuest()
+        && request.resource.data.fromUid == me()
+        && request.resource.data.status == 'bekliyor'
+        && me() in request.resource.data.members;
+      allow update: if signedIn() && (
+           (resource.data.toUid == me() && request.resource.data.status in ['kabul', 'red']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt']))
+        || (resource.data.status == 'red' && request.resource.data.fromUid == me() && request.resource.data.status == 'bekliyor'
+            && me() in request.resource.data.members && request.resource.data.members.size() == 2)
+      );
+      allow delete: if signedIn() && me() in resource.data.members;
+    }
+
+    function inviteOk(id) {
+      let d = request.resource.data;
+      let g = get(/databases/$(database)/documents/groups/$(d.groupId)).data;
+      return d.fromUid == me()
+        && me() in g.memberIds
+        && d.groupName == g.name
+        && id == d.groupId + '_' + d.toUid
+        && d.status == 'bekliyor';
+    }
+    match /invites/{id} {
+      allow read: if signedIn() && (resource == null || resource.data.toUid == me() || resource.data.fromUid == me());
+      allow create: if signedIn() && notBlocked() && !isGuest() && inviteOk(id);
+      allow update: if signedIn() && (
+           (notBlocked() && !isGuest() && inviteOk(id))   // aynı kişiye yeniden davet
+        || (resource.data.toUid == me()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status == 'goruldu')
+      );
+      allow delete: if false;
+    }
+
+    // Arkadaşların cüzlerine yalnızca hazır tebrikler: iki emoji ve sekiz cümle. Serbest yazı yok.
+    match /reactions/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && notBlocked() && !isGuest()
+        && request.resource.data.fromUid == me()
+        && request.resource.data.toUid != me()
+        && request.resource.data.text in ['🙂', '🤲', 'Maşallah', 'Allah kabul etsin', 'Tebrik ederim',
+             'Rabbim zihin açıklığı versin', 'Teşekkür ederim', 'Allah razı olsun', "Allah'a hamd olsun", 'Rica ederim'];
+      allow delete: if signedIn() && resource.data.fromUid == me();
+    }
+
+    // Destek / şikâyet / öneri yazışmaları: üye yalnızca kendininkini, yönetici hepsini görür.
+    match /supportThreads/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == me());
+      allow create: if signedIn() && request.resource.data.uid == me()
+        && request.resource.data.category in ['destek', 'sikayet', 'oneri'];
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.uid == me() && request.resource.data.uid == me()
+            && request.resource.data.category == resource.data.category);
+      allow delete: if isAdmin();
+    }
+
+    // Reklam talepleri: herkes talep oluşturabilir; telefon dahil bütün bilgileri yalnızca yönetici okur.
+    match /adRequests/{id} {
+      allow create: if signedIn() && request.resource.data.uid == me()
+        && request.resource.data.status == 'yeni';
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Genel istatistikler: yalnızca bilinen sayaçlar ve her yazışta en fazla 1 artış.
+    function statInc(k) {
+      return request.resource.data.get(k, 0) - (resource == null ? 0 : resource.data.get(k, 0)) in [0, 1];
+    }
+    match /stats/{doc} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && (resource == null
+            ? request.resource.data.keys().hasOnly(['groupsCreated', 'hatimsCompleted', 'juzRead'])
+            : request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupsCreated', 'hatimsCompleted', 'juzRead']))
+        && statInc('groupsCreated') && statInc('hatimsCompleted') && statInc('juzRead');
+      allow delete: if isAdmin();
+    }
+
+    // Katkı sunanlar ve destek ayarları: yayın hakkı yalnızca yöneticide.
+    match /sponsors/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /app/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
