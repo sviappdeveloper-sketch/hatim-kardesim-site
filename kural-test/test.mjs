@@ -19,16 +19,17 @@ await t('sayaçla profil oluşturma (hile)', false, () => setDoc(doc(ctx('E'), '
 
 // Grup kurma (A)
 const G = 'g1';
+const GEND = days(7);
 await t('grup kurma', true, () => {
   const b = writeBatch(A);
-  b.set(doc(A, 'groups', G), { name: 'Cuma', description: '', code: 'ABC234', creatorId: 'A', creatorName: 'A', genderType: 'karma', durationDays: 7, status: 'toplaniyor', memberIds: ['A'], memberNames: { A: 'A' }, juzCounts: {}, takenCount: 0, doneCount: 0, hatimCount: 0, locked: false, joinRequests: {}, startAt: Timestamp.now(), endAt: days(7), createdAt: serverTimestamp() });
+  b.set(doc(A, 'groups', G), { name: 'Cuma', description: '', code: 'ABC234', creatorId: 'A', creatorName: 'A', genderType: 'karma', durationDays: 7, status: 'toplaniyor', memberIds: ['A'], memberNames: { A: 'A' }, juzCounts: {}, takenCount: 0, doneCount: 0, hatimCount: 0, locked: false, joinRequests: {}, startAt: Timestamp.now(), endAt: GEND, createdAt: serverTimestamp() });
   for (let n = 1; n <= 30; n++) b.set(doc(A, 'juz', `${G}_${n}`), { number: n, groupId: G, groupName: 'Cuma', uid: null, userName: null, status: 'bos', endAt: null, volunteer: false, updatedAt: serverTimestamp() });
   b.set(doc(A, 'stats', 'global'), { groupsCreated: increment(1) }, { merge: true });
   return b.commit();
 });
 
 // Cüz alma (B)
-async function take(db, uid, nums, endAt = days(7)) {
+async function take(db, uid, nums, endAt = GEND) {
   return runTransaction(db, async tx => {
     await tx.get(doc(db, 'groups', G));
     for (const n of nums) { await tx.get(doc(db, 'juz', `${G}_${n}`)); }
@@ -59,7 +60,7 @@ await t('dua okundu işareti', true, () => setDoc(doc(B, 'users', 'B'), { duaRea
 await env.withSecurityRulesDisabled(async c => { await updateDoc(doc(c.firestore(), 'juz', `${G}_2`), { endAt: days(-1) }); });
 await t('süresi dolmuş cüzü yeniden alma (C)', true, () => runTransaction(C, async tx => {
   await tx.get(doc(C, 'groups', G)); await tx.get(doc(C, 'juz', `${G}_2`));
-  tx.update(doc(C, 'juz', `${G}_2`), { uid: 'C', userName: 'C', status: 'alindi', volunteer: true, previousUid: 'B', takenAt: Timestamp.now(), endAt: days(7), updatedAt: serverTimestamp() });
+  tx.update(doc(C, 'juz', `${G}_2`), { uid: 'C', userName: 'C', status: 'alindi', volunteer: true, previousUid: 'B', takenAt: Timestamp.now(), endAt: GEND, updatedAt: serverTimestamp() });
   tx.update(doc(C, 'groups', G), { 'juzCounts.B': increment(-1), 'juzCounts.C': increment(1), memberIds: arrayUnion('C'), 'memberNames.C': 'C' });
 }));
 
@@ -93,7 +94,7 @@ await t('hepsi okununca tamamlama (herkes)', true, () => runTransaction(D, async
 await t('yeni hatim (kurucu)', true, () => {
   const b = writeBatch(A);
   for (let n = 1; n <= 30; n++) b.update(doc(A, 'juz', `${G}_${n}`), { uid: null, userName: null, status: 'bos', endAt: null, volunteer: false, previousUid: null, updatedAt: serverTimestamp() });
-  b.update(doc(A, 'groups', G), { prevReaders: ['A', 'B'], status: 'toplaniyor', takenCount: 0, doneCount: 0, juzCounts: {}, startAt: Timestamp.now(), endAt: days(7) });
+  b.update(doc(A, 'groups', G), { prevReaders: ['A', 'B'], status: 'toplaniyor', takenCount: 0, doneCount: 0, juzCounts: {}, startAt: Timestamp.now(), endAt: GEND });
   return b.commit();
 });
 
