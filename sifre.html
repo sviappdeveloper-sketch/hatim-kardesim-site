@@ -1,0 +1,97 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><link rel="icon" href="icon-192.png"><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css"><title>Hesap işlemi · Hatim Kardeşim</title>
+<style>
+.form{display:grid;gap:12px;margin-top:8px}
+.form label{font-size:.9rem;color:var(--muted)}
+.form input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--ink-deep);color:var(--ivory);font:inherit}
+.form input:focus{outline:2px solid var(--gold);outline-offset:1px}
+.btn{appearance:none;border:0;border-radius:12px;padding:12px 16px;background:var(--gold);color:var(--ink-deep);font:700 1rem "Manrope",system-ui,sans-serif;cursor:pointer}
+.btn[disabled]{opacity:.6;cursor:default}
+.msg{margin:.6rem 0 0}.err{color:#F2A2A2}.ok{color:#A8E0C4}
+.goster{display:flex;gap:8px;align-items:center;font-size:.9rem;color:var(--muted)}
+[hidden]{display:none!important}
+</style></head><body><main>
+<header><img src="icon-192.png" alt=""><div><div class="eyebrow">Hatim Kardeşim · Hafız Kardeşim</div><h1 id="baslik">Hesap işlemi</h1></div></header>
+<div class="card">
+  <p id="durum">Bağlantı kontrol ediliyor…</p>
+  <form id="sifreForm" class="form" hidden autocomplete="on">
+    <input type="email" id="eposta" name="username" autocomplete="username" hidden readonly>
+    <label for="s1">Yeni şifre (en az 6 karakter)</label>
+    <input type="password" id="s1" autocomplete="new-password" minlength="6" required>
+    <label for="s2">Yeni şifre (tekrar)</label>
+    <input type="password" id="s2" autocomplete="new-password" minlength="6" required>
+    <label class="goster"><input type="checkbox" id="goster" style="width:auto"> Şifreyi göster</label>
+    <button class="btn" id="kaydet" type="submit">Şifreyi değiştir</button>
+    <p id="formMsg" class="msg err" role="alert"></p>
+  </form>
+  <p id="sonuc" class="msg" hidden></p>
+  <p id="geri" class="muted" hidden>Şimdi uygulamaya dönüp e-posta adresiniz ve yeni şifrenizle giriş yapabilirsiniz.</p>
+</div>
+<nav><a href="index.html">Ana sayfa</a><a href="gizlilik.html">Gizlilik politikası</a><a href="hesap-silme.html">Hesap silme</a></nav>
+<p class="muted">İletişim: sviapp.developer@gmail.com</p>
+</main>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id)};
+  var q=new URLSearchParams(location.search);
+  var mode=q.get('mode'), code=q.get('oobCode'), dil=(q.get('lang')||'tr').slice(0,2);
+  var cfg={apiKey:q.get('apiKey')||'AIzaSyBGE2LbB1445NNneQmwh_umMo8D6K54x0g',authDomain:'hatim-kardesim.firebaseapp.com',projectId:'hatim-kardesim'};
+  // Bağlantıdaki tek kullanımlık kodu adres çubuğundan ve geçmişten sil.
+  try{history.replaceState(null,'',location.pathname)}catch(e){}
+  function hata(e){
+    var c=(e&&e.code)||'';
+    if(c==='auth/expired-action-code')return'Bu bağlantının süresi dolmuş. Uygulamadan yeniden "Şifremi unuttum" isteği gönderin.';
+    if(c==='auth/invalid-action-code')return'Bu bağlantı geçersiz ya da daha önce kullanılmış. Uygulamadan yeni bir istek gönderin.';
+    if(c==='auth/user-disabled')return'Bu hesap kapatılmış.';
+    if(c==='auth/user-not-found')return'Bu hesap bulunamadı.';
+    if(c==='auth/weak-password')return'Şifre çok zayıf. En az 6 karakter kullanın.';
+    if(c==='auth/network-request-failed')return'İnternet bağlantınızı kontrol edin.';
+    return'İşlem yapılamadı. Lütfen uygulamadan yeniden deneyin.';
+  }
+  function bitti(metin,iyi){
+    $('sifreForm').hidden=true; $('durum').hidden=true;
+    var s=$('sonuc'); s.hidden=false; s.textContent=metin; s.className='msg '+(iyi?'ok':'err');
+    if(iyi)$('geri').hidden=false;
+  }
+  if(!mode||!code){bitti('Bu sayfa, e-postanızdaki bağlantıyla açılır. Uygulamadan "Şifremi unuttum" isteği gönderin.',false);return;}
+  var auth;
+  try{firebase.initializeApp(cfg);auth=firebase.auth();auth.languageCode=dil;}catch(e){bitti('Sayfa yüklenemedi. İnternet bağlantınızı kontrol edip bağlantıyı yeniden açın.',false);return;}
+
+  if(mode==='resetPassword'){
+    $('baslik').textContent='Yeni şifre belirle';
+    auth.verifyPasswordResetCode(code).then(function(email){
+      $('durum').textContent=email+' hesabı için yeni şifrenizi girin.';
+      $('eposta').value=email;
+      $('sifreForm').hidden=false; $('s1').focus();
+    }).catch(function(e){bitti(hata(e),false)});
+    $('goster').onchange=function(){var t=this.checked?'text':'password';$('s1').type=t;$('s2').type=t;};
+    $('sifreForm').onsubmit=function(ev){
+      ev.preventDefault();
+      var a=$('s1').value,b=$('s2').value,m=$('formMsg'); m.textContent='';
+      if(a.length<6){m.textContent='Şifre en az 6 karakter olmalı.';return;}
+      if(a!==b){m.textContent='İki şifre aynı değil.';return;}
+      $('kaydet').disabled=true; $('kaydet').textContent='Kaydediliyor…';
+      auth.confirmPasswordReset(code,a).then(function(){
+        bitti('Şifreniz değiştirildi.',true);
+      }).catch(function(e){
+        $('kaydet').disabled=false; $('kaydet').textContent='Şifreyi değiştir';
+        var c=(e&&e.code)||'';
+        if(c==='auth/weak-password'||c==='auth/network-request-failed'){m.textContent=hata(e);}else{bitti(hata(e),false);}
+      });
+    };
+  }else if(mode==='verifyEmail'){
+    $('baslik').textContent='E-posta doğrulama';
+    auth.applyActionCode(code).then(function(){bitti('E-posta adresiniz doğrulandı.',true)}).catch(function(e){bitti(hata(e),false)});
+  }else if(mode==='recoverEmail'){
+    $('baslik').textContent='E-posta adresini geri al';
+    var eski;
+    auth.checkActionCode(code).then(function(i){eski=i.data.email;return auth.applyActionCode(code)}).then(function(){
+      bitti('Hesabınızın e-posta adresi yeniden '+eski+' olarak ayarlandı. Güvenliğiniz için uygulamadan şifrenizi de yenilemenizi öneririz.',true);
+    }).catch(function(e){bitti(hata(e),false)});
+  }else{
+    bitti('Bu bağlantı tanınmadı.',false);
+  }
+})();
+</script>
+</body></html>
