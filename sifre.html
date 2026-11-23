@@ -12,6 +12,12 @@
 </style></head><body><main>
 <header><img src="icon-192.png" alt=""><div><div class="eyebrow">Hatim Kardeşim · Hafız Kardeşim</div><h1 id="baslik">Hesap işlemi</h1></div></header>
 <div class="card">
+  <div id="uygulama" hidden>
+    <p>Hatim Kardeşim telefonunuzda yüklüyse yeni şifrenizi uygulamanın içinde belirleyebilirsiniz.</p>
+    <a id="uygulamaAc" class="btn" style="display:block;text-align:center;text-decoration:none" href="#">Uygulamada aç</a>
+    <p class="muted" style="margin-top:10px">Uygulama açılmazsa şifrenizi aşağıdan buradan da değiştirebilirsiniz.</p>
+    <div class="rule"></div>
+  </div>
   <p id="durum">Bağlantı kontrol ediliyor…</p>
   <form id="sifreForm" class="form" hidden autocomplete="on">
     <input type="email" id="eposta" name="username" autocomplete="username" hidden readonly>
@@ -50,11 +56,22 @@
     return'İşlem yapılamadı. Lütfen uygulamadan yeniden deneyin.';
   }
   function bitti(metin,iyi){
-    $('sifreForm').hidden=true; $('durum').hidden=true;
+    $('sifreForm').hidden=true; $('durum').hidden=true; $('uygulama').hidden=true;
     var s=$('sonuc'); s.hidden=false; s.textContent=metin; s.className='msg '+(iyi?'ok':'err');
     if(iyi)$('geri').hidden=false;
   }
   if(!mode||!code){bitti('Bu sayfa, e-postanızdaki bağlantıyla açılır. Uygulamadan "Şifremi unuttum" isteği gönderin.',false);return;}
+  // Telefonda: önce uygulamada açmayı öner (yeni şifre uygulamanın içinde girilir).
+  var ua=navigator.userAgent||'', android=/Android/i.test(ua), ios=/iPhone|iPad|iPod/i.test(ua);
+  if(mode==='resetPassword'&&(android||ios)&&!q.get('web')){
+    var yol='app/sifre?mode=resetPassword&oobCode='+encodeURIComponent(code);
+    var geri=location.origin+location.pathname+'?mode=resetPassword&oobCode='+encodeURIComponent(code)+'&web=1';
+    var adres=android
+      ? 'intent://'+yol+'#Intent;scheme=hatimkardesim;package=com.hatimkardesim.hatim_kardesim;S.browser_fallback_url='+encodeURIComponent(geri)+';end'
+      : 'hatimkardesim://'+yol;
+    $('uygulamaAc').href=adres; $('uygulama').hidden=false;
+    if(android){ try{ location.href=adres; }catch(e){} }
+  }
   var auth;
   try{firebase.initializeApp(cfg);auth=firebase.auth();auth.languageCode=dil;}catch(e){bitti('Sayfa yüklenemedi. İnternet bağlantınızı kontrol edip bağlantıyı yeniden açın.',false);return;}
 
